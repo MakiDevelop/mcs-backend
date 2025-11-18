@@ -1,6 +1,8 @@
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -15,8 +17,12 @@ from app.utils.security import create_access_token, verify_password
 settings = get_settings()
 router = APIRouter(prefix=f"{settings.api_prefix}/auth", tags=["Auth"])
 
+# 為認證路由創建專用的速率限制器
+limiter = Limiter(key_func=get_remote_address)
+
 
 @router.post("/login", response_model=Token)
+@limiter.limit(f"{settings.rate_limit_max}/{settings.rate_limit_window}seconds")
 def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)) -> Token:
     user: User | None = db.query(User).filter(User.email == payload.email).first()
     if user is None or not verify_password(payload.password, user.password_hash):

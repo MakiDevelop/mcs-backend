@@ -1,6 +1,8 @@
-from __future__ import annotations
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
@@ -14,20 +16,27 @@ from app.services.content_media import sync_content_media
 
 settings = get_settings()
 router = APIRouter(prefix=f"{settings.api_prefix}/contents", tags=["Contents"])
+limiter = Limiter(key_func=get_remote_address)
 
 
 @router.get("", response_model=list[ContentOut])
+@limiter.limit("60/minute")
 def list_contents(
     *,
+    request: Request,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_admin_user),
     category_id: int | None = Query(default=None),
-    status_filter: ContentStatus | None = Query(default=None, alias="status"),
-    search: str | None = Query(default=None),
+    status_filter: Optional[ContentStatus] = Query(default=None, alias="status"),
+    search: str | None = Query(default=None, max_length=100),
     include_deleted: bool = Query(default=False),
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=50, le=100),
 ) -> list[ContentOut]:
+    # 驗證搜尋字串長度，防止 DoS
+    if search and len(search) > 100:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="搜尋字串過長")
+
     query = db.query(Content)
     filters = []
     if category_id:
